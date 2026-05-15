@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Umbler Talk - Disparo Rápido</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh; padding: 20px; color: #1a1a2e;
+}
+.container { max-width: 1300px; margin: 0 auto; }
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px; color: #fff;
+}
+.header h1 { font-size: 22px; display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.header h1 svg { width: 26px; height: 26px; }
+.split { display: flex; gap: 20px; }
+.split > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 900px) { .split { flex-direction: column; } }
+.card {
+  background: rgba(255,255,255,.95); backdrop-filter: blur(10px);
+  border-radius: 16px; padding: 20px; box-shadow: 0 8px 32px rgba(0,0,0,.12);
+}
+.card-title {
+  font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+  color: #6c3fc4; margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+}
+.card-title svg { width: 16px; height: 16px; stroke: #6c3fc4; }
+label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+select, input, textarea {
+  width: 100%; padding: 9px 12px; border: 1.5px solid #e2e4e8;
+  border-radius: 10px; font-size: 14px; margin-bottom: 12px; outline: none;
+  background: #fff; transition: border-color .2s, box-shadow .2s;
+}
+select:focus, input:focus, textarea:focus { border-color: #6c3fc4; box-shadow: 0 0 0 3px rgba(108,63,196,.12); }
+textarea { resize: vertical; min-height: 130px; font-family: inherit; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.tag-item {
+  padding: 5px 12px; border: 1.5px solid #e2e4e8; border-radius: 20px;
+  font-size: 12px; cursor: pointer; transition: all .2s; user-select: none;
+}
+.tag-item:hover { border-color: #6c3fc4; background: rgba(108,63,196,.05); }
+.tag-item.selected { background: #6c3fc4; color: #fff; border-color: #6c3fc4; }
+.count-bar {
+  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  border-radius: 10px; padding: 14px; text-align: center; font-size: 14px;
+  border: 1px solid rgba(108,63,196,.1);
+}
+.count-bar strong { color: #6c3fc4; font-size: 20px; }
+.btn {
+  padding: 10px 20px; border: none; border-radius: 10px; font-size: 14px;
+  font-weight: 600; cursor: pointer; transition: all .2s;
+}
+.btn-primary {
+  width: 100%; background: linear-gradient(135deg, #6c3fc4, #8b5cf6);
+  color: #fff; padding: 12px;
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(108,63,196,.3); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-outline {
+  background: transparent; border: 1.5px solid #e2e4e8; color: #555;
+  padding: 5px 12px; font-size: 12px;
+}
+.btn-outline:hover { background: #f5f3ff; border-color: #6c3fc4; }
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
+.btn-danger { background: #fee2e2; color: #dc2626; }
+.btn-danger:hover { background: #fecaca; }
+.toggle-wrap { display: flex; align-items: center; gap: 10px; cursor: pointer; margin-bottom: 12px; }
+.toggle-wrap input { display: none; width: auto; margin: 0; }
+.toggle-track {
+  width: 38px; height: 20px; background: #d1d5db; border-radius: 10px;
+  position: relative; transition: background .2s; flex-shrink: 0;
+}
+.toggle-track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  background: #fff; border-radius: 50%; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+.toggle-wrap input:checked + .toggle-track { background: #6c3fc4; }
+.toggle-wrap input:checked + .toggle-track::after { transform: translateX(18px); }
+.toggle-label { font-size: 13px; font-weight: 600; color: #444; }
+.toggle-label small { font-weight: 400; color: #999; font-size: 11px; }
+.progress-bar { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, #6c3fc4, #8b5cf6); border-radius: 3px; transition: width .3s; width: 0; }
+.log {
+  background: #1a1a2e; color: #e5e7eb; border-radius: 10px; padding: 12px;
+  font-family: monospace; font-size: 12px; max-height: 160px; overflow-y: auto; line-height: 1.6;
+}
+.log .ok { color: #22c55e; }
+.log .error { color: #ef4444; }
+.log .scheduled { color: #f59e0b; }
+.hidden { display: none !important; }
+.status-msg { text-align: center; font-size: 13px; margin-top: 8px; font-weight: 600; }
+.status-msg.error { color: #ef4444; }
+.status-msg.success { color: #22c55e; }
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px; backdrop-filter: blur(2px);
+}
+.modal {
+  background: #fff; border-radius: 16px; padding: 24px; width: 100%;
+  max-width: 480px; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0,0,0,.25);
+}
+.modal h3 { font-size: 16px; margin-bottom: 8px; }
+.modal p { font-size: 13px; color: #666; margin-bottom: 12px; }
+.modal .contact-summary {
+  background: #f9fafb; border-radius: 8px; padding: 10px; max-height: 180px;
+  overflow-y: auto; margin-bottom: 12px; font-size: 13px;
+}
+.modal .contact-summary .item { display: flex; justify-content: space-between; padding: 3px 0; }
+.modal .contact-summary .name { color: #1a1a2e; }
+.modal .contact-summary .phone { color: #6b7280; font-family: monospace; font-size: 12px; }
+.modal .msg-preview { font-size: 12px; color: #555; background: #f5f3ff; padding: 10px; border-radius: 8px; margin-bottom: 14px; line-height: 1.5; border: 1px solid rgba(108,63,196,.1); }
+.modal .flex-btns { display: flex; gap: 8px; }
+.modal .flex-btns .btn { flex: 1; text-align: center; }
+.btn-secondary { background: #f3f4f6; color: #333; }
+.btn-secondary:hover { background: #e5e7eb; }
+.scheduled-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+.scheduled-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: #f9fafb; border-radius: 10px; padding: 10px 12px; border: 1px solid #f3f4f6;
+}
+.scheduled-item .info { flex: 1; min-width: 0; }
+.scheduled-item .name { font-size: 13px; font-weight: 600; }
+.scheduled-item .phone { font-size: 12px; color: #6b7280; font-family: monospace; }
+.scheduled-item .date { font-size: 11px; color: #999; margin-top: 2px; }
+.scheduled-item .date strong { color: #6c3fc4; }
+.scheduled-empty { text-align: center; padding: 24px; color: #999; font-size: 13px; }
+.loading-dots::after { content: ""; animation: dots 1.5s steps(3,end) infinite; }
+@keyframes dots { 0% { content: ""; } 33% { content: "."; } 66% { content: ".."; } 100% { content: "..."; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Disparo Rápido
+    </h1>
+    <span style="font-size:13px;opacity:.8">Umbler Talk</span>
+  </div>
+
+  <div class="split">
+    <div>
+      <div class="card">
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Contatos
+        </div>
+        <label>Organização</label>
+        <select id="orgSelect" onchange="onOrgChange()"></select>
+        <label>Categoria</label>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;color:#888">Filtrar por tag</span>
+          <button class="btn btn-outline" onclick="loadTags()">Atualizar</button>
+        </div>
+        <div id="tagContainer" class="tag-list"><span style="font-size:13px;color:#999">Carregando...</span></div>
+        <div class="count-bar"><span id="countText">Nenhum contato encontrado</span></div>
+        <label>Telefone de origem</label>
+        <select id="fromPhone"></select>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Agendamentos
+        </div>
+        <div id="scheduledContainer"><div class="scheduled-empty">Selecione uma organização</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Mensagem
+        </div>
+        <label>Modelo</label>
+        <select id="templateSelect" onchange="applyTemplate()">
+          <option value="">-- Digitar mensagem própria --</option>
+          <optgroup label="Promoções">
+            <option value="promo-geral">Promoção geral</option>
+            <option value="promo-lancamento">Lançamento de produto</option>
+            <option value="promo-sazonal">Oferta sazonal</option>
+            <option value="promo-fidelidade">Cliente fidelidade</option>
+          </optgroup>
+          <optgroup label="Cobranças">
+            <option value="cobranca-vencimento">Lembrete de vencimento</option>
+            <option value="cobranca-atraso">Aviso de atraso</option>
+            <option value="cobranca-2via">2ª via do boleto</option>
+            <option value="cobranca-negociacao">Proposta de negociação</option>
+          </optgroup>
+        </select>
+        <textarea id="messageText" placeholder="Digite a mensagem..."></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:11px;color:#999" id="charCount">0 / 2000</span>
+          <span style="font-size:11px;color:#999">Use <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px">{ { nome } }</code> para personalizar</span>
+        </div>
+        <div class="toggle-wrap" onclick="toggleSchedule()">
+          <input type="checkbox" id="scheduleCheck">
+          <div class="toggle-track"></div>
+          <span class="toggle-label">Agendar envio <small>(data futura)</small></span>
+        </div>
+        <div id="schedulePicker" class="hidden" style="margin-bottom:12px">
+          <input type="datetime-local" id="scheduleDate">
+        </div>
+        <div id="progressContainer" class="hidden" style="margin-bottom:12px">
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+        <button class="btn btn-primary" id="sendBtn" onclick="sendBulk()" disabled>Enviar mensagem</button>
+        <div id="statusMsg" class="status-msg hidden"></div>
+        <div class="log hidden" id="logOutput"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TEMPLATES = {
+  "promo-geral": "Olá {{nome}}, tudo bem?\n\nPassando pra avisar que temos promoções imperdíveis esta semana! Aproveite descontos especiais em todos os nossos produtos.\n\nCorra e garanta o seu! 🎉\n\nQualquer dúvida, estamos à disposição.",
+  "promo-lancamento": "Olá {{nome}}!\n\nTemos novidades! Acabou de chegar nosso novo lançamento e você precisa conferir. Qualidade e preço que cabem no seu bolso.\n\nVenha conhecer! 🚀",
+  "promo-sazonal": "Olá {{nome}}!\n\nOferta relâmpago! Por tempo limitado, condições especiais que você não pode perder. Descontos de até 50% em selecionados produtos.\n\nAproveite agora! ⏰",
+  "promo-fidelidade": "Olá {{nome}}!\n\nVocê é um cliente especial e preparamos uma oferta exclusiva só para você! Descontos e benefícios que só nossos melhores clientes recebem.\n\nObrigado pela confiança! 💜",
+  "cobranca-vencimento": "Olá {{nome}}, tudo bem?\n\nLembramos que seu pagamento vence em breve. Evite contratempos e mantenha seu cadastro em dia.\n\nQualquer dúvida, estamos aqui para ajudar.",
+  "cobranca-atraso": "Olá {{nome}}!\n\nIdentificamos que seu pagamento está em atraso. Para regularizar sua situação e evitar juros, entre em contato conosco o quanto antes.\n\nEstamos à disposição para ajudar!",
+  "cobranca-2via": "Olá {{nome}}!\n\nSolicite a 2ª via do seu boleto e mantenha seus compromissos em dia. Clique no link ou fale conosco para mais informações.\n\nContamos com você!",
+  "cobranca-negociacao": "Olá {{nome}}!\n\nSabemos que imprevistos acontecem. Por isso, temos condições especiais para negociar seu débito com parcelas que cabem no seu bolso.\n\nFale conosco e regularize sua situação! 🤝",
+};
+
+let tags = [], contacts = [], selectedTagId = null, orgId = "";
+
+async function apiGet(url) {
+  const r=await fetch(url); if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||r.statusText)} return r.json();
+}
+async function apiPost(url,b){
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||r.statusText)} return r.json();
+}
+
+async function init() {
+  const orgSel=document.getElementById("orgSelect"), phoneSel=document.getElementById("fromPhone");
+  try {
+    const [me,cfg]=await Promise.all([apiGet("/api/me"),apiGet("/api/config")]);
+    const orgs=me.organizations||[];
+    if(!orgs.length){orgSel.innerHTML="<option>Nenhuma organização</option>";return}
+    orgSel.innerHTML=orgs.map(o=>`<option value="${o.id}">${o.name||o.id}</option>`).join("");
+    phoneSel.innerHTML=(cfg.fromPhones||[]).map(p=>`<option value="${p}">${p}</option>`).join("")||'<option value="">Sem telefone configurado</option>';
+    await onOrgChange();
+  } catch(e) { orgSel.innerHTML=`<option>Erro: ${e.message}</option>`; }
+}
+
+async function onOrgChange() {
+  orgId=document.getElementById("orgSelect").value;
+  document.getElementById("tagContainer").innerHTML='<span style="font-size:13px;color:#999">Carregando...</span>';
+  if(!orgId) return;
+  await Promise.all([loadTags(),loadContacts(),renderScheduled()]);
+}
+
+async function loadTags() {
+  const orgId=document.getElementById("orgSelect").value;
+  try {
+    const d=await apiGet(`/api/tags?organizationId=${orgId}`);
+    tags=d.items||[]; const c=document.getElementById("tagContainer");
+    if(!tags.length){c.innerHTML="<span style='color:#999'>Nenhuma tag</span>";return}
+    c.innerHTML=`<span class="tag-item${!selectedTagId?" selected":""}" onclick="selectTag(null)">Todas</span>`+
+      tags.map(t=>`<span class="tag-item${selectedTagId===t.id?" selected":""}" onclick="selectTag('${t.id}')">${(t.emoji||"")+" "+t.name}</span>`).join("");
+  } catch(e){document.getElementById("tagContainer").innerHTML=`<span style="color:red">${e.message}</span>`}
+}
+
+async function selectTag(id) {
+  selectedTagId=id;
+  document.querySelectorAll("#tagContainer .tag-item").forEach(e=>e.classList.remove("selected"));
+  event.target.classList.add("selected");
+  await loadContacts();
+}
+
+async function loadContacts() {
+  try {
+    let url=`/api/contacts?organizationId=${orgId}`;
+    if(selectedTagId) url+=`&tagIds=${selectedTagId}`;
+    const d=await apiGet(url);
+    contacts=(d.items||[]).filter(c=>c.phoneNumber);
+    document.getElementById("countText").textContent=`${contacts.length} contato${contacts.length!==1?"s":""} com telefone`;
+    document.getElementById("sendBtn").disabled=!contacts.length;
+  } catch(e){document.getElementById("countText").textContent=`Erro: ${e.message}`}
+}
+
+function getScheduled() {
+  try{return JSON.parse(localStorage.getItem("umblerScheduled")||"[]")}catch{return[]}
+}
+function saveScheduled(list) {
+  localStorage.setItem("umblerScheduled",JSON.stringify(list));
+}
+function renderScheduled() {
+  // remove expired entries (& refresh display)
+  const now=new Date().toISOString();
+  let list=getScheduled().filter(s=>s.dateSendAtUtc>now);
+  saveScheduled(list);
+  const c=document.getElementById("scheduledContainer");
+  const filtered=list.filter(s=>s.orgId===orgId);
+  if(!filtered.length){
+    c.innerHTML='<div class="scheduled-empty">Nenhum agendamento pendente</div>'; return;
+  }
+  c.innerHTML=`<div style="font-size:12px;color:#888;margin-bottom:8px">${filtered.length} agendamento${filtered.length!==1?"s":""} pendente${filtered.length!==1?"s":""}</div><div class="scheduled-list">`+
+    filtered.map(s=>{
+      const dt=new Date(s.dateSendAtUtc);
+      const data=dt.toLocaleDateString("pt-BR")+" "+dt.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+      return `<div class="scheduled-item">
+        <div class="info">
+          <div class="name">${s.contactName||"(sem nome)"}</div>
+          <div class="phone">${s.phone||""}</div>
+          <div class="date">Agendado: <strong>${data}</strong></div>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="cancelScheduled('${s.id}')">Cancelar</button>
+      </div>`;
+    }).join("")+"</div>";
+}
+async function cancelScheduled(id) {
+  const confirmed=await showCancelModal();
+  if(!confirmed) return;
+  try{
+    const r=await fetch(`/api/scheduled/${id}?organizationId=${orgId}`,{method:"DELETE"});
+    if(!r.ok) throw new Error("Erro ao cancelar");
+    let list=getScheduled().filter(s=>s.id!==id);
+    saveScheduled(list);
+    renderScheduled();
+  }catch(e){alert("Erro: "+e.message)}
+}
+
+function showCancelModal(){
+  return new Promise(resolve=>{
+    const o=document.createElement("div");o.className="modal-overlay";
+    o.innerHTML=`<div class="modal" style="max-width:360px">
+      <h3>Cancelar agendamento</h3>
+      <p>Tem certeza que deseja cancelar este agendamento?</p>
+      <div class="flex-btns">
+        <button class="btn btn-secondary" id="cc">Voltar</button>
+        <button class="btn btn-danger" id="co">Sim, cancelar</button>
+      </div>
+    </div>`;
+    document.body.appendChild(o);
+    o.querySelector("#co").onclick=()=>{o.remove();resolve(true)};
+    o.querySelector("#cc").onclick=()=>{o.remove();resolve(false)};
+    o.onclick=e=>{if(e.target===o){o.remove();resolve(false)}};
+  });
+}
+
+function toggleSchedule() {
+  const cb=document.getElementById("scheduleCheck"); cb.checked=!cb.checked;
+  document.getElementById("schedulePicker").classList.toggle("hidden",!cb.checked);
+  if(cb.checked&&!document.getElementById("scheduleDate").value){
+    const d=new Date(); d.setHours(d.getHours()+1,0,0,0);
+    document.getElementById("scheduleDate").value=d.toISOString().slice(0,16);
+  }
+}
+
+function applyTemplate() {
+  const k=document.getElementById("templateSelect").value;
+  if(!k) return; document.getElementById("messageText").value=TEMPLATES[k];
+}
+
+document.getElementById("messageText").addEventListener("input",function(){
+  const l=this.value.length; if(l>2000)this.value=this.value.slice(0,2000);
+  document.getElementById("charCount").textContent=`${this.value.length} / 2000`;
+});
+
+function showConfirmModal(list,msg,scheduleAt){
+  return new Promise(resolve=>{
+    const o=document.createElement("div"); o.className="modal-overlay";
+    const si=scheduleAt?`<p style="font-size:12px;color:#6c3fc4;background:#f5f3ff;padding:8px;border-radius:8px;margin-bottom:12px"><strong>📅 Agendado:</strong> ${new Date(scheduleAt).toLocaleString("pt-BR")}</p>`:"";
+    o.innerHTML=`<div class="modal"><h3>Confirmar envio</h3>
+      <p>Enviar para <strong>${list.length}</strong> contato${list.length!==1?"s":""}</p>
+      ${si}
+      <div class="contact-summary">${list.slice(0,50).map(c=>`<div class="item"><span class="name">${c.name||"(sem nome)"}</span><span class="phone">${c.phoneNumber}</span></div>`).join("")}${list.length>50?`<div style="color:#999;margin-top:4px">...e mais ${list.length-50}</div>`:""}</div>
+      <div class="msg-preview"><strong>Mensagem:</strong><br>${msg.replace(/\n/g,"<br>")}</div>
+      <div class="flex-btns"><button class="btn btn-secondary" id="mc">Cancelar</button><button class="btn btn-primary" id="mo">${scheduleAt?"Agendar":"Confirmar envio"}</button></div></div>`;
+    document.body.appendChild(o);
+    o.querySelector("#mo").onclick=()=>{o.remove();resolve(true)};
+    o.querySelector("#mc").onclick=()=>{o.remove();resolve(false)};
+    o.onclick=e=>{if(e.target===o){o.remove();resolve(false)}};
+  });
+}
+
+async function sendBulk(){
+  const orgId=document.getElementById("orgSelect").value;
+  const fromPhone=document.getElementById("fromPhone").value.trim();
+  const message=document.getElementById("messageText").value.trim();
+  if(!fromPhone){showStatus("Informe o telefone de origem","error");return}
+  if(!message){showStatus("Digite uma mensagem","error");return}
+  if(!contacts.length){showStatus("Nenhum contato disponível","error");return}
+  const scheduleAt=document.getElementById("scheduleCheck").checked
+    ?new Date(document.getElementById("scheduleDate").value).toISOString():null;
+  if(scheduleAt&&new Date(scheduleAt)<=new Date()){showStatus("A data deve ser futura","error");return}
+  const confirmed=await showConfirmModal(contacts,message,scheduleAt);
+  if(!confirmed)return;
+
+  const btn=document.getElementById("sendBtn"),log=document.getElementById("logOutput"),
+        progress=document.getElementById("progressContainer"),fill=document.getElementById("progressFill");
+  btn.disabled=true; btn.textContent="Enviando...";
+  progress.classList.remove("hidden"); log.classList.remove("hidden"); log.innerHTML=""; showStatus("","");
+
+  let sent=0,scheduled=0,failed=0;
+  const actionLabel=scheduleAt?"Agendando":"Enviando";
+  log.innerHTML+=`<div>${actionLabel} para ${contacts.length} contatos...</div>\n`;
+
+  for(let i=0;i<contacts.length;i++){
+    const c=contacts[i];
+    try{
+      const res=await apiPost("/api/send-bulk",{contacts:[c],fromPhone,organizationId:orgId,message,scheduleAt});
+      if(res.scheduledItems&&res.scheduledItems.length){
+        const list=getScheduled();
+        res.scheduledItems.forEach(si=>{si.orgId=orgId;list.push(si)});
+        saveScheduled(list);
+        scheduled++;log.innerHTML+=`<div class="scheduled">[AGENDADO] ${c.phoneNumber}</div>\n`;
+      }
+      else{sent++;log.innerHTML+=`<div class="ok">[OK] ${c.phoneNumber}</div>\n`}
+    }catch(e){failed++;log.innerHTML+=`<div class="error">[ERRO] ${c.phoneNumber}: ${e.message}</div>\n`}
+    fill.style.width=`${Math.round((i+1)/contacts.length*100)}%`; log.scrollTop=log.scrollHeight;
+  }
+
+  const msg=scheduleAt?`${scheduled} agendado${scheduled!==1?"s":""}, ${failed} falha${failed!==1?"s":""}`
+    :`${sent} enviada${sent!==1?"s":""}, ${failed} falha${failed!==1?"s":""}`;
+  log.innerHTML+=`\n<div>Finalizado! ${msg}</div>\n`;
+  btn.disabled=false; btn.textContent="Enviar mensagem";
+  showStatus(msg,failed?"error":"success");
+  renderScheduled();
+}
+
+function showStatus(m,t){const e=document.getElementById("statusMsg");if(!m){e.classList.add("hidden");return}e.textContent=m;e.className="status-msg "+t}
+
+init();
+setInterval(renderScheduled,30000);
+</script>
+</body>
+</html>

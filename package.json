@@ -1,0 +1,13 @@
+{
+  "name": "umbler-talk-bulk",
+  "version": "1.0.0",
+  "description": "Ferramenta para enviar mensagens em massa via Umbler Talk",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "dotenv": "^16.4.0"
+  }
+}
