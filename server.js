@@ -192,6 +192,32 @@ app.get("/api/bulk-status/:jobId", (req, res) => {
   });
 });
 
+app.get("/api/bulk-jobs", (req, res) => {
+  const list = [];
+  for (const job of activeJobs.values()) {
+    list.push({
+      jobId: job.id, status: job.status, progress: job.progress,
+      sent: job.sent, scheduled: job.scheduled, failed: job.failed,
+      total: job.contacts.length, processed: job.processed,
+      startedAt: job.startedAt, finishedAt: job.finishedAt,
+      organizationId: job.organizationId
+    });
+  }
+  list.sort((a, b) => b.jobId - a.jobId);
+  res.json(list);
+});
+
+// cleanup old jobs every 5 min
+setInterval(() => {
+  const cutoff = Date.now() - 3600000;
+  for (const [id, job] of activeJobs) {
+    if ((job.status === "done" || job.status === "cancelled") && new Date(job.finishedAt).getTime() < cutoff) {
+      if (job.timeout) clearTimeout(job.timeout);
+      activeJobs.delete(id);
+    }
+  }
+}, 300000);
+
 app.get("/api/quick-answers", async (req, res) => {
   try {
     const { organizationId } = req.query;
