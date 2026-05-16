@@ -192,12 +192,19 @@ function processBatch(job) {
 }
 
 function startBackgroundJob(job) {
+  function cleanupFile() {
+    if (job.fileId) {
+      const fp = path.join(UPLOADS_DIR, job.fileId);
+      if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    }
+  }
   function nextBatch() {
-    if (job.cancelled) { job.status = "cancelled"; return; }
+    if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
     processBatch(job).then(() => {
       if (job.processed >= job.contacts.length) {
         job.status = "done";
         job.finishedAt = new Date().toISOString();
+        cleanupFile();
       } else {
         job.status = "waiting";
         job.timeout = setTimeout(nextBatch, BATCH_DELAY_MS);
@@ -287,6 +294,23 @@ setInterval(() => {
     if ((job.status === "done" || job.status === "cancelled") && new Date(job.finishedAt).getTime() < cutoff) {
       if (job.timeout) clearTimeout(job.timeout);
       activeJobs.delete(id);
+    }
+  }
+}, 300000);
+
+// cleanup orphaned uploads (no job associated) older than 1h
+setInterval(() => {
+  const cutoff = Date.now() - 3600000;
+  const usedFiles = new Set();
+  for (const job of activeJobs.values()) {
+    if (job.fileId) usedFiles.add(job.fileId);
+  }
+  if (fs.existsSync(UPLOADS_DIR)) {
+    for (const f of fs.readdirSync(UPLOADS_DIR)) {
+      const fp = path.join(UPLOADS_DIR, f);
+      try {
+        if (!usedFiles.has(f) && fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch {}
     }
   }
 }, 300000);
