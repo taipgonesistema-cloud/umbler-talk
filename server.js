@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,6 +12,18 @@ const TOKEN = process.env.UTALK_API_TOKEN;
 const FROM_PHONE = process.env.FROM_PHONE;
 const FROM_PHONE_2 = process.env.FROM_PHONE_2;
 const ORG_ID = process.env.ORGANIZATION_ID;
+
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: UPLOADS_DIR,
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, Date.now() + "-" + Math.random().toString(36).slice(2) + ext);
+  }
+});
+const upload = multer({ storage });
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -23,6 +37,20 @@ async function apiFetch(path, options = {}) {
       "Content-Type": "application/json",
       ...options.headers,
     },
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`API ${res.status}: ${err}`);
+  }
+  return res.json();
+}
+
+async function apiFetchFormData(path, formData) {
+  const url = `${API_BASE}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${TOKEN}` },
+    body: formData,
   });
   if (!res.ok) {
     const err = await res.text();
@@ -76,30 +104,68 @@ function randomBatchSize() {
   return Math.max(1, BATCH_SIZE + Math.floor((Math.random() - 0.5) * 2 * BATCH_VARY));
 }
 
-async function sendSingleContact(contact, fromPhone, organizationId, message, scheduleAt) {
+const MIME_TYPES = {
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+  ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+  ".pdf": "application/pdf",
+  ".mp4": "video/mp4", ".avi": "video/x-msvideo", ".mov": "video/quicktime",
+  ".webm": "video/webm", ".mkv": "video/x-matroska",
+  ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav",
+  ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+async function sendSingleContact(contact, fromPhone, organizationId, message, scheduleAt, fileId) {
+  function fileBlob(fp) {
+    const ext = path.extname(fp).toLowerCase();
+    const type = MIME_TYPES[ext] || "application/octet-stream";
+    return new Blob([fs.readFileSync(fp)], { type });
+  }
   const personalizedMsg = (message || "").replace(/\{\{nome\}\}/g, contact.name || "");
   if (scheduleAt) {
+    const body = {
+      dateSendAtUTC: scheduleAt,
+      organizationId,
+      toPhone: contact.phoneNumber,
+      fromPhone,
+      message: personalizedMsg,
+    };
+    if (fileId) {
+      const filePath = path.join(UPLOADS_DIR, fileId);
+      if (fs.existsSync(filePath)) {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(body)) fd.append(k, v);
+        fd.append("File", fileBlob(filePath), fileId);
+        const result = await apiFetchFormData("/v1/scheduled-messages/", fd);
+        return { phone: contact.phoneNumber, status: "scheduled", id: result.id, dateSendAtUtc: scheduleAt, contactName: contact.name };
+      }
+    }
     const result = await apiFetch("/v1/scheduled-messages/", {
       method: "POST",
-      body: JSON.stringify({
-        dateSendAtUTC: scheduleAt,
-        organizationId,
-        toPhone: contact.phoneNumber,
-        fromPhone,
-        message: personalizedMsg,
-      }),
+      body: JSON.stringify(body),
     });
     return { phone: contact.phoneNumber, status: "scheduled", id: result.id, dateSendAtUtc: scheduleAt, contactName: contact.name };
   } else {
+    const body = {
+      toPhone: contact.phoneNumber,
+      fromPhone,
+      organizationId,
+      message: personalizedMsg,
+      contactName: contact.name || undefined,
+    };
+    if (fileId) {
+      const filePath = path.join(UPLOADS_DIR, fileId);
+      if (fs.existsSync(filePath)) {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(body)) fd.append(k, v);
+        fd.append("File", fileBlob(filePath), fileId);
+        const result = await apiFetchFormData("/v1/messages/simplified/", fd);
+        return { phone: contact.phoneNumber, status: "ok", result };
+      }
+    }
     const result = await apiFetch("/v1/messages/simplified/", {
       method: "POST",
-      body: JSON.stringify({
-        toPhone: contact.phoneNumber,
-        fromPhone,
-        organizationId,
-        message: personalizedMsg,
-        contactName: contact.name || undefined,
-      }),
+      body: JSON.stringify(body),
     });
     return { phone: contact.phoneNumber, status: "ok", result };
   }
@@ -109,7 +175,7 @@ function processBatch(job) {
   const size = Math.min(randomBatchSize(), job.contacts.length - job.processed);
   const batch = job.contacts.slice(job.processed, job.processed + size);
   return Promise.allSettled(
-    batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt).then(r => {
+    batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt, job.fileId).then(r => {
       job.results.push(r);
       if (r.status === "ok") job.sent++;
       else if (r.status === "scheduled") { job.scheduled++; job.scheduledItems.push({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName }); }
@@ -148,7 +214,7 @@ app.post("/api/send-bulk", async (req, res) => {
 
     if (contacts.length <= BATCH_SIZE) {
       const results = await Promise.allSettled(
-        contacts.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt)
+        contacts.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt, req.body.fileId)
           .then(r => r)
           .catch(err => ({ phone: c.phoneNumber, status: "error", error: err.message }))
         )
@@ -171,6 +237,7 @@ app.post("/api/send-bulk", async (req, res) => {
       results: [],
       scheduledItems: [],
       contacts, fromPhone, organizationId, message, scheduleAt,
+      fileId: req.body.fileId || null,
       lastBatch: [],
       cancelled: false,
       startedAt: new Date().toISOString(),
@@ -232,6 +299,17 @@ app.get("/api/quick-answers", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.post("/api/upload", upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado" });
+  res.json({ fileId: req.file.filename, originalName: req.file.originalname, mimetype: req.file.mimetype, size: req.file.size });
+});
+
+app.get("/api/file/:fileId", (req, res) => {
+  const filePath = path.join(UPLOADS_DIR, req.params.fileId);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Arquivo nao encontrado" });
+  res.sendFile(filePath);
 });
 
 app.get("/api/config", (req, res) => {

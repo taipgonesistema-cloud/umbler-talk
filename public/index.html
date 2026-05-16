@@ -287,6 +287,15 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
           <span style="font-size:11px;color:#999" id="charCount">0 / 2000</span>
           <span style="font-size:11px;color:#999">Clique para inserir: <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;cursor:pointer" onclick="insertPlaceholder('{{nome}}')">{{nome}}</code></span>
         </div>
+        <label style="margin-top:4px">Mídia <small style="font-weight:400;color:#999">(opcional — imagem ou vídeo)</small></label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+          <input type="file" id="fileInput" accept="image/*,video/*" onchange="handleFileSelect(event)" style="flex:1;font-size:13px;padding:8px">
+          <button class="btn btn-outline btn-sm" onclick="clearFile()" id="clearFileBtn" style="display:none">✕</button>
+        </div>
+        <div id="filePreview" class="hidden" style="margin-bottom:10px">
+          <img id="previewImg" style="max-width:100%;max-height:120px;border-radius:8px;border:1px solid #e2e4e8">
+          <video id="previewVideo" style="max-width:100%;max-height:180px;border-radius:8px;border:1px solid #e2e4e8" controls></video>
+        </div>
         <div class="toggle-wrap" onclick="toggleSchedule()">
           <input type="checkbox" id="scheduleCheck">
           <div class="toggle-track"></div>
@@ -336,6 +345,7 @@ const TEMPLATES = {
 
 let tags = [], contacts = [], selectedTagId = null, orgId = "";
 let templateSource = "system", apiTemplates = [];
+let currentFileId = null;
 const PHONE_LABELS = {
   "+5538991072975": "Atacado",
   "+5538999493213": "Varejo"
@@ -526,7 +536,44 @@ function insertPlaceholder(text) {
   ta.dispatchEvent(new Event("input"));
 }
 
-function showConfirmModal(list,msg,scheduleAt){
+async function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return clearFile();
+  const isVideo = file.type.startsWith("video/");
+  const maxSize = isVideo ? 15 * 1024 * 1024 : 5 * 1024 * 1024;
+  if (file.size > maxSize) { showStatus("Arquivo muito grande (máx " + (isVideo ? "15" : "5") + "MB)", "error"); e.target.value = ""; return; }
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    currentFileId = d.fileId;
+    document.getElementById("previewImg").classList.add("hidden");
+    document.getElementById("previewVideo").classList.add("hidden");
+    if (isVideo) {
+      const vid = document.getElementById("previewVideo");
+      vid.src = URL.createObjectURL(file);
+      vid.classList.remove("hidden");
+    } else {
+      const img = document.getElementById("previewImg");
+      img.src = URL.createObjectURL(file);
+      img.classList.remove("hidden");
+    }
+    document.getElementById("filePreview").classList.remove("hidden");
+    document.getElementById("clearFileBtn").style.display = "inline-block";
+    showStatus("", "");
+  } catch (err) { showStatus("Erro no upload: " + err.message, "error"); e.target.value = ""; }
+}
+
+function clearFile() {
+  currentFileId = null;
+  document.getElementById("fileInput").value = "";
+  document.getElementById("filePreview").classList.add("hidden");
+  document.getElementById("clearFileBtn").style.display = "none";
+}
+
+function showConfirmModal(list, msg, scheduleAt) {
   return new Promise(resolve=>{
     const o=document.createElement("div"); o.className="modal-overlay";
     const si=scheduleAt?`<p style="font-size:12px;color:#6c3fc4;background:#f5f3ff;padding:8px;border-radius:8px;margin-bottom:12px"><strong>📅 Agendado:</strong> ${new Date(scheduleAt).toLocaleString("pt-BR")}</p>`:"";
@@ -566,7 +613,7 @@ async function sendBulk(){
   fill.style.width="0%";
 
   try {
-    const resp=await apiPost("/api/send-bulk",{contacts,fromPhone,organizationId:orgId,message,scheduleAt});
+    const resp=await apiPost("/api/send-bulk",{contacts,fromPhone,organizationId:orgId,message,scheduleAt,fileId:currentFileId});
 
     if(resp.jobId){
       log.innerHTML+=`<div style="color:#f59e0b">📦 Job #${resp.jobId} criado — processando em lotes de ${resp.batchSize} com pausa de ${resp.batchDelayMs/60000}min (fique a vontade pra fechar a página)</div>\n`;
