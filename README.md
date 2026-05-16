@@ -29,8 +29,8 @@ Preencha as variáveis no `.env`:
 | Variável | Descrição |
 |---|---|
 | `UTALK_API_TOKEN` | Token Bearer da API Umbler Talk |
-| `FROM_PHONE` | Telefone principal (Atacado) |
-| `FROM_PHONE_2` | Telefone secundário (Varejo) |
+| `FROM_PHONE` | Telefone principal |
+| `FROM_PHONE_2` | Telefone secundário |
 | `ORGANIZATION_ID` | ID da organização |
 
 ## Uso

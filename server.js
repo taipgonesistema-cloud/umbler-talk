@@ -69,7 +69,12 @@ app.get("/api/contacts", async (req, res) => {
 const activeJobs = new Map();
 let jobIdCounter = 0;
 const BATCH_SIZE = 50;
+const BATCH_VARY = 15;
 const BATCH_DELAY_MS = 720000;
+
+function randomBatchSize() {
+  return Math.max(1, BATCH_SIZE + Math.floor((Math.random() - 0.5) * 2 * BATCH_VARY));
+}
 
 async function sendSingleContact(contact, fromPhone, organizationId, message, scheduleAt) {
   const personalizedMsg = (message || "").replace(/\{\{nome\}\}/g, contact.name || "");
@@ -101,7 +106,8 @@ async function sendSingleContact(contact, fromPhone, organizationId, message, sc
 }
 
 function processBatch(job) {
-  const batch = job.contacts.slice(job.processed, job.processed + BATCH_SIZE);
+  const size = Math.min(randomBatchSize(), job.contacts.length - job.processed);
+  const batch = job.contacts.slice(job.processed, job.processed + size);
   return Promise.allSettled(
     batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt).then(r => {
       job.results.push(r);
