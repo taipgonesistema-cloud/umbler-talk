@@ -479,31 +479,63 @@ async function sendBulk(){
   btn.disabled=true; btn.textContent="Enviando...";
   progress.classList.remove("hidden"); log.classList.remove("hidden"); log.innerHTML=""; showStatus("","");
 
-  let sent=0,scheduled=0,failed=0;
   const actionLabel=scheduleAt?"Agendando":"Enviando";
-  log.innerHTML+=`<div>${actionLabel} para ${contacts.length} contatos...</div>\n`;
+  log.innerHTML+=`<div>${actionLabel} ${contacts.length} contatos...</div>\n`;
+  fill.style.width="0%";
 
-  for(let i=0;i<contacts.length;i++){
-    const c=contacts[i];
-    try{
-      const res=await apiPost("/api/send-bulk",{contacts:[c],fromPhone,organizationId:orgId,message,scheduleAt});
-      if(res.scheduledItems&&res.scheduledItems.length){
+  try {
+    const resp=await apiPost("/api/send-bulk",{contacts,fromPhone,organizationId:orgId,message,scheduleAt});
+
+    if(resp.jobId){
+      log.innerHTML+=`<div style="color:#f59e0b">📦 Job #${resp.jobId} criado — processando em lotes de ${resp.batchSize} com pausa de ${resp.batchDelayMs/60000}min (fique a vontade pra fechar a página)</div>\n`;
+      let shownCount=0;
+      const poll=setInterval(async()=>{
+        try{
+          const st=await apiGet(`/api/bulk-status/${resp.jobId}`);
+          fill.style.width=st.progress+"%";
+          const newItems=st.lastBatch||[];
+          if(newItems.length>0&&shownCount<st.processed){
+            log.innerHTML+=`<div style="color:#8b5cf6">▶️ Lote processado (${shownCount+1}-${st.processed} de ${st.total})</div>\n`;
+            shownCount=st.processed;
+          }
+          if(st.scheduledItems&&st.scheduledItems.length){
+            const list=getScheduled();
+            st.scheduledItems.forEach(si=>{si.orgId=orgId;if(!list.find(x=>x.id===si.id))list.push(si)});
+            saveScheduled(list);
+          }
+          if(st.status==="done"||st.status==="cancelled"){
+            clearInterval(poll);
+            btn.disabled=false; btn.textContent="Enviar mensagem";
+            const msg=`${st.sent} enviada${st.sent!==1?"s":""}, ${st.scheduled} agendado${st.scheduled!==1?"s":""}, ${st.failed} falha${st.failed!==1?"s":""}`;
+            log.innerHTML+=`\n<div>✅ Finalizado! ${msg}</div>\n`;
+            showStatus(msg,st.failed?"error":"success");
+            renderScheduled();
+          }
+        }catch(e){/* poll error, retry */}
+      },5000);
+    } else {
+      if(resp.scheduledItems&&resp.scheduledItems.length){
         const list=getScheduled();
-        res.scheduledItems.forEach(si=>{si.orgId=orgId;list.push(si)});
+        resp.scheduledItems.forEach(si=>{si.orgId=orgId;list.push(si)});
         saveScheduled(list);
-        scheduled++;log.innerHTML+=`<div class="scheduled">[AGENDADO] ${c.phoneNumber}</div>\n`;
       }
-      else{sent++;log.innerHTML+=`<div class="ok">[OK] ${c.phoneNumber}</div>\n`}
-    }catch(e){failed++;log.innerHTML+=`<div class="error">[ERRO] ${c.phoneNumber}: ${e.message}</div>\n`}
-    fill.style.width=`${Math.round((i+1)/contacts.length*100)}%`; log.scrollTop=log.scrollHeight;
+      (resp.results||[]).forEach(r=>{
+        log.innerHTML+=r.status==="scheduled"?`<div class="scheduled">[AGENDADO] ${r.phone}</div>\n`
+          :r.status==="ok"?`<div class="ok">[OK] ${r.phone}</div>\n`
+          :`<div class="error">[ERRO] ${r.phone}: ${r.error}</div>\n`;
+      });
+      fill.style.width="100%";
+      const msg=scheduleAt?`${resp.scheduled} agendado${resp.scheduled!==1?"s":""}, ${resp.failed} falha${resp.failed!==1?"s":""}`
+        :`${resp.sent} enviada${resp.sent!==1?"s":""}, ${resp.failed} falha${resp.failed!==1?"s":""}`;
+      log.innerHTML+=`\n<div>Finalizado! ${msg}</div>\n`;
+      btn.disabled=false; btn.textContent="Enviar mensagem";
+      showStatus(msg,resp.failed?"error":"success");
+      renderScheduled();
+    }
+  } catch(e){
+    showStatus("Erro: "+e.message,"error");
+    btn.disabled=false; btn.textContent="Enviar mensagem";
   }
-
-  const msg=scheduleAt?`${scheduled} agendado${scheduled!==1?"s":""}, ${failed} falha${failed!==1?"s":""}`
-    :`${sent} enviada${sent!==1?"s":""}, ${failed} falha${failed!==1?"s":""}`;
-  log.innerHTML+=`\n<div>Finalizado! ${msg}</div>\n`;
-  btn.disabled=false; btn.textContent="Enviar mensagem";
-  showStatus(msg,failed?"error":"success");
-  renderScheduled();
 }
 
 function showStatus(m,t){const e=document.getElementById("statusMsg");if(!m){e.classList.add("hidden");return}e.textContent=m;e.className="status-msg "+t}

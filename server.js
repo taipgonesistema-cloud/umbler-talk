@@ -66,52 +66,130 @@ app.get("/api/contacts", async (req, res) => {
   }
 });
 
+const activeJobs = new Map();
+let jobIdCounter = 0;
+const BATCH_SIZE = 50;
+const BATCH_DELAY_MS = 720000;
+
+async function sendSingleContact(contact, fromPhone, organizationId, message, scheduleAt) {
+  const personalizedMsg = (message || "").replace(/\{\{nome\}\}/g, contact.name || "");
+  if (scheduleAt) {
+    const result = await apiFetch("/v1/scheduled-messages/", {
+      method: "POST",
+      body: JSON.stringify({
+        dateSendAtUTC: scheduleAt,
+        organizationId,
+        toPhone: contact.phoneNumber,
+        fromPhone,
+        message: personalizedMsg,
+      }),
+    });
+    return { phone: contact.phoneNumber, status: "scheduled", id: result.id, dateSendAtUtc: scheduleAt, contactName: contact.name };
+  } else {
+    const result = await apiFetch("/v1/messages/simplified/", {
+      method: "POST",
+      body: JSON.stringify({
+        toPhone: contact.phoneNumber,
+        fromPhone,
+        organizationId,
+        message: personalizedMsg,
+        contactName: contact.name || undefined,
+      }),
+    });
+    return { phone: contact.phoneNumber, status: "ok", result };
+  }
+}
+
+function processBatch(job) {
+  const batch = job.contacts.slice(job.processed, job.processed + BATCH_SIZE);
+  return Promise.allSettled(
+    batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt).then(r => {
+      job.results.push(r);
+      if (r.status === "ok") job.sent++;
+      else if (r.status === "scheduled") { job.scheduled++; job.scheduledItems.push({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName }); }
+      return r;
+    }).catch(err => {
+      job.results.push({ phone: c.phoneNumber, status: "error", error: err.message });
+      job.failed++;
+    }))
+  ).then(() => {
+    job.processed += batch.length;
+    job.progress = Math.round((job.processed / job.contacts.length) * 100);
+    job.lastBatch = batch.map(c => c.phoneNumber);
+  });
+}
+
+function startBackgroundJob(job) {
+  function nextBatch() {
+    if (job.cancelled) { job.status = "cancelled"; return; }
+    processBatch(job).then(() => {
+      if (job.processed >= job.contacts.length) {
+        job.status = "done";
+        job.finishedAt = new Date().toISOString();
+      } else {
+        job.status = "waiting";
+        job.timeout = setTimeout(nextBatch, BATCH_DELAY_MS);
+      }
+    });
+  }
+  nextBatch();
+}
+
 app.post("/api/send-bulk", async (req, res) => {
   try {
-    const { contacts, fromPhone, organizationId, message } = req.body;
-    const results = [];
-    for (const contact of contacts) {
-      try {
-        const personalizedMsg = (message || "").replace(/\{\{nome\}\}/g, contact.name || "");
-        if (req.body.scheduleAt) {
-          const result = await apiFetch("/v1/scheduled-messages/", {
-            method: "POST",
-            body: JSON.stringify({
-              dateSendAtUTC: req.body.scheduleAt,
-              organizationId,
-              toPhone: contact.phoneNumber,
-              fromPhone,
-              message: personalizedMsg,
-            }),
-          });
-          results.push({ phone: contact.phoneNumber, status: "scheduled", id: result.id, dateSendAtUtc: req.body.scheduleAt, contactName: contact.name });
-        } else {
-          const result = await apiFetch("/v1/messages/simplified/", {
-            method: "POST",
-            body: JSON.stringify({
-              toPhone: contact.phoneNumber,
-              fromPhone,
-              organizationId,
-              message: personalizedMsg,
-              contactName: contact.name || undefined,
-            }),
-          });
-          results.push({ phone: contact.phoneNumber, status: "ok", result });
-        }
-      } catch (err) {
-        results.push({ phone: contact.phoneNumber, status: "error", error: err.message });
-      }
+    const { contacts, fromPhone, organizationId, message, scheduleAt } = req.body;
+    if (!contacts || !contacts.length) return res.status(400).json({ error: "Nenhum contato" });
+
+    if (contacts.length <= BATCH_SIZE) {
+      const results = await Promise.allSettled(
+        contacts.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt)
+          .then(r => r)
+          .catch(err => ({ phone: c.phoneNumber, status: "error", error: err.message }))
+        )
+      );
+      const items = results.map(r => r.status === "fulfilled" ? r.value : r.reason);
+      return res.json({
+        sent: items.filter(r => r.status === "ok").length,
+        scheduled: items.filter(r => r.status === "scheduled").length,
+        failed: items.filter(r => r.status === "error").length,
+        scheduledItems: items.filter(r => r.status === "scheduled").map(r => ({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName })),
+        results: items
+      });
     }
-    res.json({
-      sent: results.filter(r => r.status === "ok").length,
-      scheduled: results.filter(r => r.status === "scheduled").length,
-      failed: results.filter(r => r.status === "error").length,
-      scheduledItems: results.filter(r => r.status === "scheduled").map(r => ({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName })),
-      results
-    });
+
+    const jobId = ++jobIdCounter;
+    const job = {
+      id: jobId,
+      status: "running",
+      progress: 0, sent: 0, scheduled: 0, failed: 0, processed: 0,
+      results: [],
+      scheduledItems: [],
+      contacts, fromPhone, organizationId, message, scheduleAt,
+      lastBatch: [],
+      cancelled: false,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      timeout: null
+    };
+    activeJobs.set(jobId, job);
+    startBackgroundJob(job);
+    res.json({ jobId, total: contacts.length, batchSize: BATCH_SIZE, batchDelayMs: BATCH_DELAY_MS });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.get("/api/bulk-status/:jobId", (req, res) => {
+  const job = activeJobs.get(parseInt(req.params.jobId));
+  if (!job) return res.status(404).json({ error: "Job nao encontrado" });
+  res.json({
+    jobId: job.id, status: job.status, progress: job.progress,
+    sent: job.sent, scheduled: job.scheduled, failed: job.failed,
+    total: job.contacts.length, processed: job.processed,
+    lastBatch: job.lastBatch,
+    scheduledItems: job.scheduledItems,
+    startedAt: job.startedAt, finishedAt: job.finishedAt
+  });
 });
 
 app.get("/api/quick-answers", async (req, res) => {
