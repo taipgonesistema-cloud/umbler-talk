@@ -199,6 +199,11 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Mensagem
         </div>
+        <div class="toggle-wrap" onclick="toggleTemplateSource()">
+          <input type="checkbox" id="apiTemplateToggle">
+          <div class="toggle-track"></div>
+          <span class="toggle-label">Usar templates da API <small>(respostas rápidas)</small></span>
+        </div>
         <label>Modelo</label>
         <select id="templateSelect" onchange="applyTemplate()">
           <option value="">-- Digitar mensagem própria --</option>
@@ -252,6 +257,7 @@ const TEMPLATES = {
 };
 
 let tags = [], contacts = [], selectedTagId = null, orgId = "";
+let templateSource = "system", apiTemplates = [];
 
 async function apiGet(url) {
   const r=await fetch(url); if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||r.statusText)} return r.json();
@@ -378,9 +384,50 @@ function toggleSchedule() {
   }
 }
 
+async function toggleTemplateSource() {
+  const cb = document.getElementById("apiTemplateToggle");
+  cb.checked = !cb.checked;
+  templateSource = cb.checked ? "api" : "system";
+  const sel = document.getElementById("templateSelect");
+  if (templateSource === "api") {
+    sel.innerHTML = '<option value="">Carregando...</option>';
+    try {
+      const orgId = document.getElementById("orgSelect").value;
+      if (!orgId) { sel.innerHTML = '<option value="">Selecione uma organização primeiro</option>'; return; }
+      const d = await apiGet(`/api/quick-answers?organizationId=${orgId}&Take=200`);
+      apiTemplates = d.items || [];
+      sel.innerHTML = '<option value="">-- Selecione uma resposta rápida --</option>' +
+        apiTemplates.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+    } catch (e) {
+      sel.innerHTML = '<option value="">Erro ao carregar: ' + e.message + '</option>';
+    }
+  } else {
+    sel.innerHTML =
+      '<option value="">-- Digitar mensagem própria --</option>' +
+      '<optgroup label="Promoções">' +
+      '<option value="promo-geral">Promoção geral</option>' +
+      '<option value="promo-lancamento">Lançamento de produto</option>' +
+      '<option value="promo-sazonal">Oferta sazonal</option>' +
+      '<option value="promo-fidelidade">Cliente fidelidade</option>' +
+      '</optgroup>' +
+      '<optgroup label="Cobranças">' +
+      '<option value="cobranca-vencimento">Lembrete de vencimento</option>' +
+      '<option value="cobranca-atraso">Aviso de atraso</option>' +
+      '<option value="cobranca-2via">2ª via do boleto</option>' +
+      '<option value="cobranca-negociacao">Proposta de negociação</option>' +
+      '</optgroup>';
+  }
+}
+
 function applyTemplate() {
-  const k=document.getElementById("templateSelect").value;
-  if(!k) return; document.getElementById("messageText").value=TEMPLATES[k];
+  const k = document.getElementById("templateSelect").value;
+  if (!k) return;
+  if (templateSource === "api") {
+    const t = apiTemplates.find(a => a.id === k);
+    if (t) document.getElementById("messageText").value = t.content;
+  } else {
+    document.getElementById("messageText").value = TEMPLATES[k];
+  }
 }
 
 document.getElementById("messageText").addEventListener("input",function(){

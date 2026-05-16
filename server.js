@@ -114,6 +114,16 @@ app.post("/api/send-bulk", async (req, res) => {
   }
 });
 
+app.get("/api/quick-answers", async (req, res) => {
+  try {
+    const { organizationId } = req.query;
+    const data = await apiFetch(`/v1/quick-answers/?organizationId=${organizationId}&Take=200`);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/api/config", (req, res) => {
   const phones = [FROM_PHONE];
   if (FROM_PHONE_2) phones.push(FROM_PHONE_2);
