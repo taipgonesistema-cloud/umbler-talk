@@ -223,7 +223,7 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
         <textarea id="messageText" placeholder="Digite a mensagem..."></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <span style="font-size:11px;color:#999" id="charCount">0 / 2000</span>
-          <span style="font-size:11px;color:#999">Use <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px">{ { nome } }</code> para personalizar</span>
+          <span style="font-size:11px;color:#999">Clique para inserir: <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;cursor:pointer" onclick="insertPlaceholder('{{nome}}')">{{nome}}</code></span>
         </div>
         <div class="toggle-wrap" onclick="toggleSchedule()">
           <input type="checkbox" id="scheduleCheck">
@@ -434,6 +434,15 @@ document.getElementById("messageText").addEventListener("input",function(){
   const l=this.value.length; if(l>2000)this.value=this.value.slice(0,2000);
   document.getElementById("charCount").textContent=`${this.value.length} / 2000`;
 });
+
+function insertPlaceholder(text) {
+  const ta = document.getElementById("messageText");
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  ta.value = ta.value.substring(0, start) + text + ta.value.substring(end);
+  ta.selectionStart = ta.selectionEnd = start + text.length;
+  ta.focus();
+  ta.dispatchEvent(new Event("input"));
+}
 
 function showConfirmModal(list,msg,scheduleAt){
   return new Promise(resolve=>{
