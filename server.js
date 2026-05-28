@@ -398,7 +398,7 @@ app.delete("/api/scheduled/:id", async (req, res) => {
 });
 
 app.post("/api/csv/upload", (req, res) => {
-  uploadCsv(req, res, function (err) {
+  uploadCsv.single("file")(req, res, function (err) {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado" });
     const entry = {
