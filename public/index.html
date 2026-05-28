@@ -718,8 +718,13 @@ async function uploadCsv(event) {
   fd.append("file", file);
   try {
     const r = await fetch("/api/csv/upload", { method: "POST", body: fd });
+    if (!r.ok) {
+      const txt = await r.text();
+      let msg;
+      try { msg = JSON.parse(txt).error; } catch { msg = txt; }
+      throw new Error(msg);
+    }
     const d = await r.json();
-    if (!r.ok) throw new Error(d.error);
     await loadCsvList();
     showStatus(`CSV "${d.originalName}" enviado com ${d.contactCount} contatos`, "success");
   } catch (err) {
