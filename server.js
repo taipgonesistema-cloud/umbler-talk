@@ -25,6 +25,51 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+const CSV_DIR = path.join(__dirname, "csv");
+if (!fs.existsSync(CSV_DIR)) fs.mkdirSync(CSV_DIR, { recursive: true });
+
+const REGISTRY_PATH = path.join(__dirname, "csv-registry.json");
+let csvRegistry = [];
+if (fs.existsSync(REGISTRY_PATH)) {
+  try { csvRegistry = JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf-8")); } catch {}
+}
+
+function saveCsvRegistry() {
+  fs.writeFileSync(REGISTRY_PATH, JSON.stringify(csvRegistry, null, 2));
+}
+
+const csvStorage = multer.diskStorage({
+  destination: CSV_DIR,
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, Date.now() + "-" + Math.random().toString(36).slice(2) + ext);
+  }
+});
+const uploadCsv = multer({
+  storage: csvStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext !== ".csv") return cb(new Error("Apenas arquivos .csv são aceitos"));
+    cb(null, true);
+  }
+});
+
+function parseCsvLine(line) {
+  const result = [];
+  let current = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && i + 1 < line.length && line[i + 1] === '"') { current += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if (ch === ',' && !inQuotes) { result.push(current.trim()); current = ""; }
+    else { current += ch; }
+  }
+  result.push(current.trim());
+  return result;
+}
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -350,6 +395,81 @@ app.delete("/api/scheduled/:id", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.post("/api/csv/upload", (req, res) => {
+  uploadCsv(req, res, function (err) {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: "Nenhum arquivo enviado" });
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      originalName: req.file.originalname,
+      filename: req.file.filename,
+      size: req.file.size,
+      uploadedAt: new Date().toISOString(),
+      contactCount: 0
+    };
+    try {
+      const content = fs.readFileSync(path.join(CSV_DIR, entry.filename), "utf-8");
+      const lines = content.trim().split("\n").filter(Boolean);
+      entry.contactCount = Math.max(0, lines.length - 1);
+    } catch {}
+    csvRegistry.push(entry);
+    saveCsvRegistry();
+    res.json(entry);
+  });
+});
+
+app.get("/api/csv/list", (req, res) => {
+  res.json(csvRegistry.slice().reverse());
+});
+
+app.get("/api/csv/template", (req, res) => {
+  const template = 'name,phoneNumber\nJoão Silva,5538991072975\nMaria Santos,5538999493213\nCarlos Oliveira,553800000000';
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", "attachment; filename=modelo-contatos.csv");
+  res.send(template);
+});
+
+app.get("/api/csv/:id/download", (req, res) => {
+  const entry = csvRegistry.find(e => e.id === req.params.id);
+  if (!entry) return res.status(404).json({ error: "CSV não encontrado" });
+  const fp = path.join(CSV_DIR, entry.filename);
+  if (!fs.existsSync(fp)) return res.status(404).json({ error: "Arquivo não encontrado no disco" });
+  res.download(fp, entry.originalName);
+});
+
+app.delete("/api/csv/:id", (req, res) => {
+  const idx = csvRegistry.findIndex(e => e.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "CSV não encontrado" });
+  const entry = csvRegistry[idx];
+  const fp = path.join(CSV_DIR, entry.filename);
+  if (fs.existsSync(fp)) fs.unlinkSync(fp);
+  csvRegistry.splice(idx, 1);
+  saveCsvRegistry();
+  res.json({ ok: true });
+});
+
+app.get("/api/csv/:id/contacts", (req, res) => {
+  const entry = csvRegistry.find(e => e.id === req.params.id);
+  if (!entry) return res.status(404).json({ error: "CSV não encontrado" });
+  const fp = path.join(CSV_DIR, entry.filename);
+  if (!fs.existsSync(fp)) return res.status(404).json({ error: "Arquivo não encontrado no disco" });
+  const content = fs.readFileSync(fp, "utf-8");
+  const lines = content.trim().split("\n").filter(Boolean);
+  if (lines.length < 2) return res.json({ contacts: [], total: 0 });
+  const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase());
+  const nameIdx = headers.indexOf("name") >= 0 ? headers.indexOf("name") : headers.indexOf("nome");
+  const phoneIdx = headers.indexOf("phonenumber") >= 0 ? headers.indexOf("phonenumber")
+    : headers.indexOf("telefone") >= 0 ? headers.indexOf("telefone")
+    : headers.indexOf("phone") >= 0 ? headers.indexOf("phone") : -1;
+  if (phoneIdx === -1) return res.status(400).json({ error: "CSV deve ter coluna 'phoneNumber' ou 'telefone'" });
+  const contacts = lines.slice(1).map(line => {
+    const cols = parseCsvLine(line).map(c => c.replace(/^"|"$/g, ""));
+    const phone = (cols[phoneIdx] || "").replace(/[\s\-\+\(\)]/g, "");
+    return { name: nameIdx >= 0 ? cols[nameIdx] : "", phoneNumber: phone };
+  }).filter(c => c.phoneNumber.length >= 10);
+  res.json({ contacts, total: contacts.length, fileName: entry.originalName });
 });
 
 app.listen(PORT, () => {

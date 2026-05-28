@@ -248,6 +248,21 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
 
       <div class="card">
         <div class="card-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Tabelas CSV
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button class="btn btn-outline btn-sm" onclick="downloadTemplate()" title="Baixar modelo de CSV">📄 Modelo</button>
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('csvInput').click()" title="Fazer upload de CSV">📤 Upload</button>
+          <input type="file" id="csvInput" accept=".csv" onchange="uploadCsv(event)" style="display:none">
+        </div>
+        <div id="csvListContainer">
+          <div class="scheduled-empty">Nenhuma tabela enviada</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
           <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           Agendamentos
         </div>
@@ -345,6 +360,7 @@ const TEMPLATES = {
 
 let tags = [], contacts = [], selectedTagId = null, orgId = "";
 let templateSource = "system", apiTemplates = [];
+let csvList = [];
 let currentFileId = null;
 const PHONE_LABELS = {
   "+5538991072975": "Atacado",
@@ -368,6 +384,7 @@ async function init() {
     orgSel.innerHTML=orgs.map(o=>`<option value="${o.id}">${o.name||o.id}</option>`).join("");
     phoneSel.innerHTML=(cfg.fromPhones||[]).map(p=>`<option value="${p}">${PHONE_LABELS[p]||p}</option>`).join("")||'<option value="">Sem telefone configurado</option>';
     await onOrgChange();
+    await loadCsvList();
   } catch(e) { orgSel.innerHTML=`<option>Erro: ${e.message}</option>`; }
 }
 
@@ -669,6 +686,107 @@ async function sendBulk(){
 
 function showStatus(m,t){const e=document.getElementById("statusMsg");if(!m){e.classList.add("hidden");return}e.textContent=m;e.className="status-msg "+t}
 
+async function loadCsvList() {
+  try {
+    const list = await apiGet("/api/csv/list");
+    csvList = list;
+    const c = document.getElementById("csvListContainer");
+    if (!list.length) {
+      c.innerHTML = '<div class="scheduled-empty">Nenhuma tabela enviada</div>';
+      return;
+    }
+    c.innerHTML = list.map(csv => {
+      const dt = new Date(csv.uploadedAt);
+      const ds = dt.toLocaleDateString("pt-BR")+" "+dt.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+      return `<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:#f9fafb;border-radius:10px;margin-bottom:6px;border:1px solid #f3f4f6">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${csv.originalName}</div>
+          <div style="font-size:11px;color:#6b7280">${csv.contactCount} contatos · ${ds}</div>
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="importCsv('${csv.id}')" title="Usar estes contatos" style="font-size:11px;padding:4px 8px">Importar</button>
+        <button class="btn btn-sm btn-outline" onclick="downloadCsv('${csv.id}')" title="Baixar" style="font-size:11px;padding:4px 8px">⬇</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteCsv('${csv.id}')" title="Excluir" style="font-size:11px;padding:4px 8px">✕</button>
+      </div>`;
+    }).join("");
+  } catch(e) {}
+}
+
+async function uploadCsv(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const r = await fetch("/api/csv/upload", { method: "POST", body: fd });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    await loadCsvList();
+    showStatus(`CSV "${d.originalName}" enviado com ${d.contactCount} contatos`, "success");
+  } catch (err) {
+    showStatus("Erro upload CSV: " + err.message, "error");
+  }
+  event.target.value = "";
+}
+
+async function importCsv(id) {
+  try {
+    const d = await apiGet(`/api/csv/${id}/contacts`);
+    if (!d.contacts || !d.contacts.length) {
+      showStatus("Nenhum contato encontrado no CSV", "error");
+      return;
+    }
+    selectedTagId = null;
+    document.querySelectorAll("#tagContainer .tag-item").forEach(e => e.classList.remove("selected"));
+    const firstTag = document.querySelector("#tagContainer .tag-item");
+    if (firstTag) firstTag.classList.add("selected");
+    contacts = d.contacts;
+    document.getElementById("countText").textContent = `${contacts.length} contato${contacts.length!==1?"s":""} (importados de ${d.fileName})`;
+    document.getElementById("sendBtn").disabled = !contacts.length;
+    showStatus(`${contacts.length} contatos importados de "${d.fileName}"`, "success");
+  } catch (err) {
+    showStatus("Erro ao importar: " + err.message, "error");
+  }
+}
+
+function downloadCsv(id) {
+  window.open(`/api/csv/${id}/download`, "_blank");
+}
+
+function downloadTemplate() {
+  window.open("/api/csv/template", "_blank");
+}
+
+function showDeleteCsvModal() {
+  return new Promise(resolve => {
+    const o = document.createElement("div"); o.className = "modal-overlay";
+    o.innerHTML = `<div class="modal" style="max-width:360px">
+      <h3>Excluir tabela</h3>
+      <p>Tem certeza que deseja excluir esta tabela CSV?</p>
+      <div class="flex-btns">
+        <button class="btn btn-secondary" id="cc">Voltar</button>
+        <button class="btn btn-danger" id="co">Sim, excluir</button>
+      </div>
+    </div>`;
+    document.body.appendChild(o);
+    o.querySelector("#co").onclick = () => { o.remove(); resolve(true); };
+    o.querySelector("#cc").onclick = () => { o.remove(); resolve(false); };
+    o.onclick = e => { if (e.target === o) { o.remove(); resolve(false); } };
+  });
+}
+
+async function deleteCsv(id) {
+  const confirmed = await showDeleteCsvModal();
+  if (!confirmed) return;
+  try {
+    const r = await fetch(`/api/csv/${id}`, { method: "DELETE" });
+    if (!r.ok) throw new Error("Erro ao excluir");
+    await loadCsvList();
+    showStatus("CSV excluído", "success");
+  } catch (err) {
+    showStatus("Erro: " + err.message, "error");
+  }
+}
+
 function toggleJobsPanel() {
   const o=document.getElementById("jobsOverlay"),d=document.getElementById("jobsDrawer");
   const open=!o.classList.contains("open");
@@ -712,6 +830,7 @@ async function fetchJobs() {
 init();
 setInterval(renderScheduled,30000);
 setInterval(fetchJobs,5000);
+setInterval(loadCsvList,15000);
 </script>
 </body>
 </html>
