@@ -241,6 +241,10 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
           <button class="btn btn-outline" onclick="loadTags()">Atualizar</button>
         </div>
         <div id="tagContainer" class="tag-list"><span style="font-size:13px;color:#999">Carregando...</span></div>
+        <div id="importBanner" class="hidden" style="background:#fef3c7;border:1px solid #f59e0b;border-radius:10px;padding:10px;margin-bottom:8px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span id="importBannerText" style="color:#92400e"></span>
+          <button class="btn btn-sm" onclick="resetImport()" style="background:#f59e0b;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">Voltar</button>
+        </div>
         <div class="count-bar"><span id="countText">Nenhum contato encontrado</span></div>
         <label>Telefone de origem</label>
         <select id="fromPhone"></select>
@@ -362,6 +366,7 @@ let tags = [], contacts = [], selectedTagId = null, orgId = "";
 let templateSource = "system", apiTemplates = [];
 let csvList = [];
 let currentFileId = null;
+let importedFromCsv = null; // { fileName, count } when using imported contacts
 const PHONE_LABELS = {
   "+5538991072975": "Atacado",
   "+5538999493213": "Varejo"
@@ -392,6 +397,7 @@ async function onOrgChange() {
   orgId=document.getElementById("orgSelect").value;
   document.getElementById("tagContainer").innerHTML='<span style="font-size:13px;color:#999">Carregando...</span>';
   if(!orgId) return;
+  if (importedFromCsv) resetImport();
   await Promise.all([loadTags(),loadContacts(),renderScheduled()]);
 }
 
@@ -407,6 +413,7 @@ async function loadTags() {
 }
 
 async function selectTag(id) {
+  if (importedFromCsv) return;
   selectedTagId=id;
   document.querySelectorAll("#tagContainer .tag-item").forEach(e=>e.classList.remove("selected"));
   event.target.classList.add("selected");
@@ -414,6 +421,7 @@ async function selectTag(id) {
 }
 
 async function loadContacts() {
+  if (importedFromCsv) return;
   try {
     let url=`/api/contacts?organizationId=${orgId}`;
     if(selectedTagId) url+=`&tagIds=${selectedTagId}`;
@@ -740,17 +748,25 @@ async function importCsv(id) {
       showStatus("Nenhum contato encontrado no CSV", "error");
       return;
     }
-    selectedTagId = null;
-    document.querySelectorAll("#tagContainer .tag-item").forEach(e => e.classList.remove("selected"));
-    const firstTag = document.querySelector("#tagContainer .tag-item");
-    if (firstTag) firstTag.classList.add("selected");
+    importedFromCsv = { fileName: d.fileName, count: d.contacts.length };
     contacts = d.contacts;
-    document.getElementById("countText").textContent = `${contacts.length} contato${contacts.length!==1?"s":""} (importados de ${d.fileName})`;
+    selectedTagId = null;
+    document.querySelectorAll("#tagContainer .tag-item").forEach(e => { e.style.pointerEvents = "none"; e.style.opacity = ".4"; });
+    document.getElementById("importBanner").classList.remove("hidden");
+    document.getElementById("importBannerText").textContent = `📋 Usando ${d.contacts.length} contatos de "${d.fileName}"`;
+    document.getElementById("countText").textContent = `${contacts.length} contato${contacts.length!==1?"s":""} importados do CSV`;
     document.getElementById("sendBtn").disabled = !contacts.length;
     showStatus(`${contacts.length} contatos importados de "${d.fileName}"`, "success");
   } catch (err) {
     showStatus("Erro ao importar: " + err.message, "error");
   }
+}
+
+function resetImport() {
+  importedFromCsv = null;
+  document.querySelectorAll("#tagContainer .tag-item").forEach(e => { e.style.pointerEvents = ""; e.style.opacity = ""; });
+  document.getElementById("importBanner").classList.add("hidden");
+  loadContacts();
 }
 
 function downloadCsv(id) {
