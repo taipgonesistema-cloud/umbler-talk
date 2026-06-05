@@ -282,8 +282,12 @@ function startBackgroundJob(job) {
 
   if (isLarge) {
     // === DAILY SCHEDULE MODE (listas grandes) ===
+    function calcDaysRemaining() {
+      return Math.ceil((job.contacts.length - job.processed) / DAILY_LIMIT);
+    }
     function scheduleDay() {
       if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
+      job.daysRemaining = calcDaysRemaining();
       const remaining = getRemainingDaily();
       const left = job.contacts.length - job.processed;
       if (left <= 0) { job.status = "done"; job.finishedAt = new Date().toISOString(); cleanupFile(); return; }
@@ -383,7 +387,8 @@ app.post("/api/send-bulk", async (req, res) => {
       startedAt: new Date().toISOString(),
       finishedAt: null,
       timeout: null,
-      nextWindow: null
+      nextWindow: null,
+      daysRemaining: null
     };
     activeJobs.set(jobId, job);
     startBackgroundJob(job);
@@ -401,6 +406,7 @@ app.get("/api/bulk-status/:jobId", (req, res) => {
     sent: job.sent, scheduled: job.scheduled, failed: job.failed,
     total: job.contacts.length, processed: job.processed,
     lastBatch: job.lastBatch, nextWindow: job.nextWindow,
+    daysRemaining: job.daysRemaining,
     scheduledItems: job.scheduledItems,
     startedAt: job.startedAt, finishedAt: job.finishedAt
   });
@@ -413,7 +419,7 @@ app.get("/api/bulk-jobs", (req, res) => {
       jobId: job.id, status: job.status, progress: job.progress,
       sent: job.sent, scheduled: job.scheduled, failed: job.failed,
       total: job.contacts.length, processed: job.processed,
-      nextWindow: job.nextWindow,
+      nextWindow: job.nextWindow, daysRemaining: job.daysRemaining,
       startedAt: job.startedAt, finishedAt: job.finishedAt,
       organizationId: job.organizationId
     });
