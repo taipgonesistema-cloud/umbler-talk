@@ -144,6 +144,22 @@ let jobIdCounter = 0;
 const BATCH_SIZE = 50;
 const BATCH_VARY = 15;
 const BATCH_DELAY_MS = 720000;
+const DAILY_LIMIT = parseInt(process.env.DAILY_LIMIT) || 5000;
+const STATS_PATH = path.join(__dirname, "daily-stats.json");
+
+function getDailyStats() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (fs.existsSync(STATS_PATH)) {
+    try { const s = JSON.parse(fs.readFileSync(STATS_PATH, "utf-8")); if (s.date === today) return s; } catch {}
+  }
+  return { date: today, sent: 0 };
+}
+
+function saveDailyStats(s) { fs.writeFileSync(STATS_PATH, JSON.stringify(s)); }
+
+function getRemainingDaily() { return Math.max(0, DAILY_LIMIT - getDailyStats().sent); }
+
+function recordSent(n) { const s = getDailyStats(); s.sent += n; saveDailyStats(s); }
 
 function randomBatchSize() {
   return Math.max(1, BATCH_SIZE + Math.floor((Math.random() - 0.5) * 2 * BATCH_VARY));
@@ -217,7 +233,11 @@ async function sendSingleContact(contact, fromPhone, organizationId, message, sc
 }
 
 function processBatch(job) {
-  const size = Math.min(randomBatchSize(), job.contacts.length - job.processed);
+  const remaining = getRemainingDaily();
+  if (remaining <= 0) return Promise.resolve("limit-reached");
+  let size = Math.min(randomBatchSize(), job.contacts.length - job.processed);
+  size = Math.min(size, remaining);
+  if (size <= 0) return Promise.resolve("limit-reached");
   const batch = job.contacts.slice(job.processed, job.processed + size);
   return Promise.allSettled(
     batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt, job.fileId).then(r => {
@@ -229,11 +249,27 @@ function processBatch(job) {
       job.results.push({ phone: c.phoneNumber, status: "error", error: err.message });
       job.failed++;
     }))
-  ).then(() => {
+  ).then((results) => {
     job.processed += batch.length;
     job.progress = Math.round((job.processed / job.contacts.length) * 100);
     job.lastBatch = batch.map(c => c.phoneNumber);
+    const sentNow = results.filter(r => r.status === "fulfilled" && r.value && (r.value.status === "ok" || r.value.status === "scheduled")).length;
+    if (sentNow > 0) recordSent(sentNow);
   });
+}
+
+function calcBatchDelay(job) {
+  const remaining = getRemainingDaily();
+  if (remaining <= 0) return 24 * 60 * 60 * 1000;
+  const left = job.contacts.length - job.processed;
+  const canSend = Math.min(left, remaining);
+  if (canSend <= 0) return 24 * 60 * 60 * 1000;
+  const now = new Date();
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  const msLeft = Math.max(60000, endOfDay - now);
+  const batchesLeft = Math.ceil(canSend / BATCH_SIZE);
+  const ideal = Math.floor(msLeft / batchesLeft);
+  return Math.max(BATCH_DELAY_MS, ideal);
 }
 
 function startBackgroundJob(job) {
@@ -245,14 +281,20 @@ function startBackgroundJob(job) {
   }
   function nextBatch() {
     if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
-    processBatch(job).then(() => {
-      if (job.processed >= job.contacts.length) {
+    processBatch(job).then((res) => {
+      if (res === "limit-reached" || job.processed >= job.contacts.length) {
+        const remaining = getRemainingDaily();
+        if (remaining <= 0 && job.processed < job.contacts.length) {
+          job.status = "waiting";
+          job.timeout = setTimeout(nextBatch, calcBatchDelay(job));
+          return;
+        }
         job.status = "done";
         job.finishedAt = new Date().toISOString();
         cleanupFile();
       } else {
         job.status = "waiting";
-        job.timeout = setTimeout(nextBatch, BATCH_DELAY_MS);
+        job.timeout = setTimeout(nextBatch, calcBatchDelay(job));
       }
     });
   }
@@ -265,19 +307,26 @@ app.post("/api/send-bulk", async (req, res) => {
     if (!contacts || !contacts.length) return res.status(400).json({ error: "Nenhum contato" });
 
     if (contacts.length <= BATCH_SIZE) {
+      const remaining = getRemainingDaily();
+      const usable = remaining <= 0 ? [] : contacts.slice(0, Math.min(contacts.length, remaining));
+      if (!usable.length) return res.status(429).json({ error: "Limite diário atingido (" + DAILY_LIMIT + ")", dailyStats: getDailyStats(), dailyLimit: DAILY_LIMIT });
       const results = await Promise.allSettled(
-        contacts.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt, req.body.fileId)
+        usable.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt, req.body.fileId)
           .then(r => r)
           .catch(err => ({ phone: c.phoneNumber, status: "error", error: err.message }))
         )
       );
       const items = results.map(r => r.status === "fulfilled" ? r.value : r.reason);
+      const sentCount = items.filter(r => r.status === "ok" || r.status === "scheduled").length;
+      if (sentCount > 0) recordSent(sentCount);
       return res.json({
         sent: items.filter(r => r.status === "ok").length,
         scheduled: items.filter(r => r.status === "scheduled").length,
         failed: items.filter(r => r.status === "error").length,
         scheduledItems: items.filter(r => r.status === "scheduled").map(r => ({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName })),
-        results: items
+        results: items,
+        dailyStats: getDailyStats(),
+        dailyLimit: DAILY_LIMIT
       });
     }
 
@@ -298,7 +347,7 @@ app.post("/api/send-bulk", async (req, res) => {
     };
     activeJobs.set(jobId, job);
     startBackgroundJob(job);
-    res.json({ jobId, total: contacts.length, batchSize: BATCH_SIZE, batchDelayMs: BATCH_DELAY_MS });
+    res.json({ jobId, total: contacts.length, batchSize: BATCH_SIZE, batchDelayMs: BATCH_DELAY_MS, dailyStats: getDailyStats(), dailyLimit: DAILY_LIMIT });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -330,6 +379,10 @@ app.get("/api/bulk-jobs", (req, res) => {
   }
   list.sort((a, b) => b.jobId - a.jobId);
   res.json(list);
+});
+
+app.get("/api/daily-stats", (req, res) => {
+  res.json({ ...getDailyStats(), dailyLimit: DAILY_LIMIT, remaining: getRemainingDaily() });
 });
 
 // cleanup old jobs every 5 min

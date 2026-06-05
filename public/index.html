@@ -311,6 +311,17 @@ textarea { resize: vertical; min-height: 130px; font-family: inherit; }
         <div id="progressContainer" class="hidden" style="margin-bottom:12px">
           <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
         </div>
+        <div id="dailyStatsBar" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;background:#f5f3ff;border-radius:8px;border:1px solid rgba(108,63,196,.1)">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:11px;font-weight:600;color:#6c3fc4">Limite diário</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+              <div style="flex:1;height:4px;background:#e0d6f5;border-radius:2px;overflow:hidden">
+                <div id="dailyProgressFill" style="height:100%;background:#6c3fc4;border-radius:2px;width:0%"></div>
+              </div>
+              <span id="dailyStatsText" style="font-size:11px;color:#6b7280;white-space:nowrap">0 / 5000</span>
+            </div>
+          </div>
+        </div>
         <button class="btn btn-primary" id="sendBtn" onclick="sendBulk()" disabled>Enviar mensagem</button>
         <div id="statusMsg" class="status-msg hidden"></div>
         <div class="log hidden" id="logOutput"></div>
@@ -396,6 +407,7 @@ async function init() {
     phoneSel.innerHTML=(cfg.fromPhones||[]).map(p=>`<option value="${p}">${PHONE_LABELS[p]||p}</option>`).join("")||'<option value="">Sem telefone configurado</option>';
     await onOrgChange();
     await loadCsvList();
+    await loadDailyStats();
   } catch(e) { orgSel.innerHTML=`<option>Erro: ${e.message}</option>`; }
 }
 
@@ -859,9 +871,19 @@ async function fetchJobs() {
 }
 
 init();
+async function loadDailyStats() {
+  try {
+    const d = await apiGet("/api/daily-stats");
+    const pct = d.dailyLimit > 0 ? Math.round((d.sent / d.dailyLimit) * 100) : 0;
+    document.getElementById("dailyProgressFill").style.width = Math.min(pct, 100) + "%";
+    document.getElementById("dailyStatsText").textContent = d.sent + " / " + d.dailyLimit;
+  } catch(e) {}
+}
+
 setInterval(renderScheduled,30000);
 setInterval(fetchJobs,5000);
 setInterval(loadCsvList,15000);
+setInterval(loadDailyStats,10000);
 </script>
 </body>
 </html>
