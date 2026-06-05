@@ -854,6 +854,7 @@ async function fetchJobs() {
           <span class="job-id">Job #${j.jobId}</span>
           <span class="job-status ${st}">${label}</span>
         </div>
+        ${j.nextWindow?`<div style="font-size:11px;color:#6c3fc4;font-weight:600;margin-bottom:6px">📅 Próximo: ${j.nextWindow}</div>`:""}
         <div class="job-progress">
           <div class="progress-bar"><div class="progress-fill" style="width:${j.progress}%"></div></div>
           <div style="font-size:11px;color:#6b7280;margin-top:3px;text-align:right">${j.progress}%</div>

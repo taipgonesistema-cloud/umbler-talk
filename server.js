@@ -144,7 +144,13 @@ let jobIdCounter = 0;
 const BATCH_SIZE = 50;
 const BATCH_VARY = 15;
 const BATCH_DELAY_MS = 720000;
-const DAILY_LIMIT = parseInt(process.env.DAILY_LIMIT) || 5000;
+const DAILY_LIMIT = parseInt(process.env.DAILY_LIMIT) || 250;
+const LARGE_LIST_THRESHOLD = 1000;
+const SEND_WINDOWS = [
+  { name: "Manhã", start: 8, end: 11 },
+  { name: "Tarde", start: 13, end: 16 },
+  { name: "Noite", start: 18, end: 21 },
+];
 const STATS_PATH = path.join(__dirname, "daily-stats.json");
 
 function getDailyStats() {
@@ -163,6 +169,18 @@ function recordSent(n) { const s = getDailyStats(); s.sent += n; saveDailyStats(
 
 function randomBatchSize() {
   return Math.max(1, BATCH_SIZE + Math.floor((Math.random() - 0.5) * 2 * BATCH_VARY));
+}
+
+function getRandomWindowTime(w) {
+  const total = Math.floor(Math.random() * ((w.end - w.start) * 60));
+  return { hour: w.start + Math.floor(total / 60), minute: total % 60 };
+}
+
+function getMsUntilTime(h, m) {
+  const now = new Date();
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0);
+  if (t <= now) t.setDate(t.getDate() + 1);
+  return t - now;
 }
 
 const MIME_TYPES = {
@@ -232,12 +250,10 @@ async function sendSingleContact(contact, fromPhone, organizationId, message, sc
   }
 }
 
+
 function processBatch(job) {
-  const remaining = getRemainingDaily();
-  if (remaining <= 0) return Promise.resolve("limit-reached");
   let size = Math.min(randomBatchSize(), job.contacts.length - job.processed);
-  size = Math.min(size, remaining);
-  if (size <= 0) return Promise.resolve("limit-reached");
+  if (size <= 0) return Promise.resolve();
   const batch = job.contacts.slice(job.processed, job.processed + size);
   return Promise.allSettled(
     batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt, job.fileId).then(r => {
@@ -258,47 +274,75 @@ function processBatch(job) {
   });
 }
 
-function calcBatchDelay(job) {
-  const remaining = getRemainingDaily();
-  if (remaining <= 0) return 24 * 60 * 60 * 1000;
-  const left = job.contacts.length - job.processed;
-  const canSend = Math.min(left, remaining);
-  if (canSend <= 0) return 24 * 60 * 60 * 1000;
-  const now = new Date();
-  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-  const msLeft = Math.max(60000, endOfDay - now);
-  const batchesLeft = Math.ceil(canSend / BATCH_SIZE);
-  const ideal = Math.floor(msLeft / batchesLeft);
-  return Math.max(BATCH_DELAY_MS, ideal);
-}
-
 function startBackgroundJob(job) {
+  const isLarge = job.contacts.length > LARGE_LIST_THRESHOLD;
   function cleanupFile() {
-    if (job.fileId) {
-      const fp = path.join(UPLOADS_DIR, job.fileId);
-      if (fs.existsSync(fp)) fs.unlinkSync(fp);
-    }
+    if (job.fileId) { const fp = path.join(UPLOADS_DIR, job.fileId); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
   }
-  function nextBatch() {
-    if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
-    processBatch(job).then((res) => {
-      if (res === "limit-reached" || job.processed >= job.contacts.length) {
-        const remaining = getRemainingDaily();
-        if (remaining <= 0 && job.processed < job.contacts.length) {
-          job.status = "waiting";
-          job.timeout = setTimeout(nextBatch, calcBatchDelay(job));
-          return;
-        }
-        job.status = "done";
-        job.finishedAt = new Date().toISOString();
-        cleanupFile();
-      } else {
-        job.status = "waiting";
-        job.timeout = setTimeout(nextBatch, calcBatchDelay(job));
+
+  if (isLarge) {
+    // === DAILY SCHEDULE MODE (listas grandes) ===
+    function scheduleDay() {
+      if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
+      const remaining = getRemainingDaily();
+      const left = job.contacts.length - job.processed;
+      if (left <= 0) { job.status = "done"; job.finishedAt = new Date().toISOString(); cleanupFile(); return; }
+      if (remaining <= 0) {
+        const ms = getMsUntilTime(SEND_WINDOWS[0].start, 0);
+        job.status = "waiting"; job.nextWindow = "Amanhã (" + SEND_WINDOWS[0].name + ")";
+        job.timeout = setTimeout(scheduleDay, ms); return;
       }
-    });
+      const canSend = Math.min(left, remaining);
+      const perWindow = Math.max(1, Math.ceil(canSend / 3));
+      const windows = SEND_WINDOWS.map(w => ({ w, t: getRandomWindowTime(w) }));
+      scheduleWindow(0, windows, perWindow);
+    }
+
+    function scheduleWindow(idx, windows, perWindow) {
+      if (idx >= 3 || job.cancelled) { scheduleDay(); return; }
+      const w = windows[idx];
+      const ms = getMsUntilTime(w.t.hour, w.t.minute);
+      const label = w.w.name + " " + String(w.t.hour).padStart(2, "0") + ":" + String(w.t.minute).padStart(2, "0");
+      job.status = "waiting"; job.nextWindow = label;
+      job.timeout = setTimeout(async () => {
+        if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
+        job.status = "running"; job.nextWindow = null;
+        const batchSize = Math.min(perWindow, job.contacts.length - job.processed, getRemainingDaily());
+        if (batchSize > 0) {
+          const batch = job.contacts.slice(job.processed, job.processed + batchSize);
+          await Promise.allSettled(batch.map(c => sendSingleContact(c, job.fromPhone, job.organizationId, job.message, job.scheduleAt, job.fileId).then(r => {
+            job.results.push(r);
+            if (r.status === "ok") job.sent++; else if (r.status === "scheduled") { job.scheduled++; job.scheduledItems.push({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName }); }
+            return r;
+          }).catch(err => { job.results.push({ phone: c.phoneNumber, status: "error", error: err.message }); job.failed++; })));
+          const sentNow = batch.filter((_, i) => {
+            const r = job.results[job.results.length - batch.length + i];
+            return r && (r.status === "ok" || r.status === "scheduled");
+          }).length;
+          if (sentNow > 0) recordSent(sentNow);
+          job.processed += batch.length;
+          job.progress = Math.round((job.processed / job.contacts.length) * 100);
+        }
+        scheduleWindow(idx + 1, windows, perWindow);
+      }, ms);
+    }
+    scheduleDay();
+
+  } else {
+    // === CONTINUOUS MODE (listas pequenas) ===
+    function nextBatch() {
+      if (job.cancelled) { job.status = "cancelled"; cleanupFile(); return; }
+      processBatch(job).then(() => {
+        if (job.processed >= job.contacts.length) {
+          job.status = "done"; job.finishedAt = new Date().toISOString(); cleanupFile();
+        } else {
+          job.status = "waiting"; job.nextWindow = null;
+          job.timeout = setTimeout(nextBatch, BATCH_DELAY_MS);
+        }
+      });
+    }
+    nextBatch();
   }
-  nextBatch();
 }
 
 app.post("/api/send-bulk", async (req, res) => {
@@ -307,11 +351,8 @@ app.post("/api/send-bulk", async (req, res) => {
     if (!contacts || !contacts.length) return res.status(400).json({ error: "Nenhum contato" });
 
     if (contacts.length <= BATCH_SIZE) {
-      const remaining = getRemainingDaily();
-      const usable = remaining <= 0 ? [] : contacts.slice(0, Math.min(contacts.length, remaining));
-      if (!usable.length) return res.status(429).json({ error: "Limite diário atingido (" + DAILY_LIMIT + ")", dailyStats: getDailyStats(), dailyLimit: DAILY_LIMIT });
       const results = await Promise.allSettled(
-        usable.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt, req.body.fileId)
+        contacts.map(c => sendSingleContact(c, fromPhone, organizationId, message, scheduleAt, req.body.fileId)
           .then(r => r)
           .catch(err => ({ phone: c.phoneNumber, status: "error", error: err.message }))
         )
@@ -324,9 +365,7 @@ app.post("/api/send-bulk", async (req, res) => {
         scheduled: items.filter(r => r.status === "scheduled").length,
         failed: items.filter(r => r.status === "error").length,
         scheduledItems: items.filter(r => r.status === "scheduled").map(r => ({ id: r.id, phone: r.phone, dateSendAtUtc: r.dateSendAtUtc, contactName: r.contactName })),
-        results: items,
-        dailyStats: getDailyStats(),
-        dailyLimit: DAILY_LIMIT
+        results: items, dailyStats: getDailyStats(), dailyLimit: DAILY_LIMIT
       });
     }
 
@@ -343,7 +382,8 @@ app.post("/api/send-bulk", async (req, res) => {
       cancelled: false,
       startedAt: new Date().toISOString(),
       finishedAt: null,
-      timeout: null
+      timeout: null,
+      nextWindow: null
     };
     activeJobs.set(jobId, job);
     startBackgroundJob(job);
@@ -360,7 +400,7 @@ app.get("/api/bulk-status/:jobId", (req, res) => {
     jobId: job.id, status: job.status, progress: job.progress,
     sent: job.sent, scheduled: job.scheduled, failed: job.failed,
     total: job.contacts.length, processed: job.processed,
-    lastBatch: job.lastBatch,
+    lastBatch: job.lastBatch, nextWindow: job.nextWindow,
     scheduledItems: job.scheduledItems,
     startedAt: job.startedAt, finishedAt: job.finishedAt
   });
@@ -373,6 +413,7 @@ app.get("/api/bulk-jobs", (req, res) => {
       jobId: job.id, status: job.status, progress: job.progress,
       sent: job.sent, scheduled: job.scheduled, failed: job.failed,
       total: job.contacts.length, processed: job.processed,
+      nextWindow: job.nextWindow,
       startedAt: job.startedAt, finishedAt: job.finishedAt,
       organizationId: job.organizationId
     });
